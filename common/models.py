@@ -94,8 +94,8 @@ class MaskInference(nn.Module):
         hidden_size = hidden_size * (2 if bidirectional else 1)
         
         # Параметры нормализации входных данных
-        self.input_mean = Parameter(torch.zeros(num_features))
-        self.input_scale = Parameter(torch.ones(num_features))
+        # self.input_mean = Parameter(torch.zeros(num_features))
+        # self.input_scale = Parameter(torch.ones(num_features))
         
         # Линейные слои
         
@@ -116,7 +116,7 @@ class MaskInference(nn.Module):
         data = self.input_normalization(data)
         
         # Нормализация входных данных
-        data = (data + self.input_mean) * self.input_scale
+        # data = (data + self.input_mean) * self.input_scale
         
         # Первый линейный слой и BatchNorm
         data = self.fc1(data)
@@ -145,11 +145,11 @@ class MaskInference(nn.Module):
 
     # Added function
     @classmethod
-    def build(cls, num_features, num_audio_channels, hidden_size, 
+    def build(num_features, num_audio_channels, hidden_size, 
               num_layers, bidirectional, dropout, num_sources, 
               activation='sigmoid'):
         # Step 1. Register our model with nussl
-        nussl.ml.register_module(cls)
+        nussl.ml.register_module(MaskInference)
         
         # Step 2a: Define the building blocks.
         modules = {
