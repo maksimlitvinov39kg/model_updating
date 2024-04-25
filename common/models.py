@@ -145,11 +145,11 @@ class MaskInference(nn.Module):
 
     # Added function
     @classmethod
-    def build(num_features, num_audio_channels, hidden_size, 
+    def build(cls,num_features, num_audio_channels, hidden_size, 
               num_layers, bidirectional, dropout, num_sources, 
               activation='sigmoid'):
         # Step 1. Register our model with nussl
-        nussl.ml.register_module(MaskInference)
+        nussl.ml.register_module(cls)
         
         # Step 2a: Define the building blocks.
         modules = {
