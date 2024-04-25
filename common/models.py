@@ -1,6 +1,7 @@
 import nussl
 import torch
 from torch import nn
+from torch.nn import Linear, Parameter
 from torch.nn.utils import weight_norm
 from nussl.ml.networks.modules import (
     Embedding, DualPath, DualPathBlock, STFT, 
@@ -75,27 +76,58 @@ def deep_audio_estimation(
 
 class MaskInference(nn.Module):
     def __init__(self, num_features, num_audio_channels, hidden_size,
-                 num_layers, bidirectional, dropout, num_sources, 
-                activation='sigmoid'):
+                 num_layers, bidirectional, dropout, num_sources,
+                 activation='sigmoid'):
         super().__init__()
         
         self.amplitude_to_db = AmplitudeToDB()
         self.input_normalization = BatchNorm(num_features)
+        self.fc1 = Linear(num_features * num_audio_channels, hidden_size, bias=False)
+        self.bn1 = BatchNorm(hidden_size)
         self.recurrent_stack = RecurrentStack(
             num_features * num_audio_channels, hidden_size, 
             num_layers, bool(bidirectional), dropout
         )
         hidden_size = hidden_size * (int(bidirectional) + 1)
+        self.input_mean = Parameter(torch.zeros(num_features))
+        self.input_scale = Parameter(torch.ones(num_features))
+        
+        # Линейные слои
+        
+        self.fc2 = Linear(hidden_size, hidden_size, bias=False)
+        self.bn2 = BatchNorm(hidden_size)
+        self.fc3 = Linear(hidden_size, hidden_size, bias=False)
+        self.bn3 = BatchNorm(hidden_size)
+        
+        # Слой для преобразования выхода в маску
         self.embedding = Embedding(num_features, hidden_size, 
                                    num_sources, activation, 
                                    num_audio_channels)
         
     def forward(self, data):
-        mix_magnitude = data # save for masking
-        
+        mix_magnitude = data
         data = self.amplitude_to_db(mix_magnitude)
         data = self.input_normalization(data)
+        
+        # Нормализация входных данных
+        data = (data + self.input_mean) * self.input_scale
+        
+        # Первый линейный слой и BatchNorm
+        data = self.fc1(data)
+        data = self.bn1(data)
+        data = torch.tanh(data)  # активация Tanh
+        
+        # Рекуррентные слои
         data = self.recurrent_stack(data)
+        
+        # Второй линейный слой и BatchNorm
+        data = self.fc2(data)
+        data = self.bn2(data)
+        data = torch.relu(data) 
+        data = self.fc3(data)
+        data = self.bn3(data)
+        data = torch.relu(data)
+        # Получение масок
         mask = self.embedding(data)
         estimates = mix_magnitude.unsqueeze(-1) * mask
         
