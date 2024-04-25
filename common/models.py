@@ -1,6 +1,7 @@
 import nussl
-import torch
 from torch import nn
+from torch.nn import Linear, Parameter
+import torch
 from torch.nn.utils import weight_norm
 from nussl.ml.networks.modules import (
     Embedding, DualPath, DualPathBlock, STFT, 
@@ -10,6 +11,7 @@ from nussl.ml.networks.modules import (
 import numpy as np
 from . import utils, argbind
 from typing import Dict, List
+
 
 # ----------------------------------------------------
 # --------------------- SEPARATORS -------------------
@@ -73,29 +75,65 @@ def deep_audio_estimation(
 # --------------- MASK ESTIMATION MODELS -------------
 # ----------------------------------------------------
 
+
 class MaskInference(nn.Module):
     def __init__(self, num_features, num_audio_channels, hidden_size,
-                 num_layers, bidirectional, dropout, num_sources, 
-                activation='sigmoid'):
+                 num_layers, bidirectional, dropout, num_sources,
+                 activation='sigmoid'):
         super().__init__()
-        
+
         self.amplitude_to_db = AmplitudeToDB()
         self.input_normalization = BatchNorm(num_features)
+        self.fc1 = Linear(num_features * num_audio_channels, hidden_size, bias=False)
+        self.bn1 = BatchNorm(hidden_size)
         self.recurrent_stack = RecurrentStack(
             num_features * num_audio_channels, hidden_size, 
-            num_layers, bool(bidirectional), dropout
+            num_layers, bidirectional, dropout
         )
-        hidden_size = hidden_size * (int(bidirectional) + 1)
+        # Учитываем bidirectional для размера скрытого слоя
+        hidden_size = hidden_size * (2 if bidirectional else 1)
+        
+        # Параметры нормализации входных данных
+        self.input_mean = Parameter(torch.zeros(num_features))
+        self.input_scale = Parameter(torch.ones(num_features))
+        
+        # Линейные слои
+        
+        self.fc2 = Linear(hidden_size, hidden_size, bias=False)
+        self.bn2 = BatchNorm(hidden_size)
+        self.fc3 = Linear(hidden_size, hidden_size, bias=False)
+        self.bn3 = BatchNorm(hidden_size)
+        
+        # Слой для преобразования выхода в маску
         self.embedding = Embedding(num_features, hidden_size, 
                                    num_sources, activation, 
                                    num_audio_channels)
         
     def forward(self, data):
-        mix_magnitude = data # save for masking
-        
+        # Преобразование амплитуды и нормализация
+        mix_magnitude = data
         data = self.amplitude_to_db(mix_magnitude)
         data = self.input_normalization(data)
+        
+        # Нормализация входных данных
+        data = (data + self.input_mean) * self.input_scale
+        
+        # Первый линейный слой и BatchNorm
+        data = self.fc1(data)
+        data = self.bn1(data)
+        data = torch.tanh(data)  # активация Tanh
+        
+        # Рекуррентные слои
         data = self.recurrent_stack(data)
+        
+        # Второй линейный слой и BatchNorm
+        data = self.fc2(data)
+        data = self.bn2(data)
+        data = torch.relu(data) 
+        data = self.fc3(data)
+        data = self.bn3(data)
+        data = torch.relu(data)
+        # Получение масок
         mask = self.embedding(data)
         estimates = mix_magnitude.unsqueeze(-1) * mask
         
@@ -104,15 +142,14 @@ class MaskInference(nn.Module):
             'estimates': estimates
         }
         return output
-    
+
     # Added function
-    @staticmethod
-    @argbind.bind_to_parser()
-    def build(num_features, num_audio_channels, hidden_size, 
+    @classmethod
+    def build(cls, num_features, num_audio_channels, hidden_size, 
               num_layers, bidirectional, dropout, num_sources, 
               activation='sigmoid'):
         # Step 1. Register our model with nussl
-        nussl.ml.register_module(MaskInference)
+        nussl.ml.register_module(cls)
         
         # Step 2a: Define the building blocks.
         modules = {
@@ -131,6 +168,7 @@ class MaskInference(nn.Module):
             }
         }
         
+        
         # Step 2b: Define the connections between input and output.
         # Here, the mix_magnitude key is the only input to the model.
         connections = [
@@ -143,19 +181,19 @@ class MaskInference(nn.Module):
         # This will be important later when we actually deploy our model.
         for key in ['mask', 'estimates']:
             modules[key] = {'class': 'Alias'}
-            connections.append([key, [f'model:{key}']])
+            connections.append([key, f'model:{key}'])
         
         # Step 2d. There are two outputs from our SeparationModel: estimates and mask.
         # Then put it all together.
         output = ['estimates', 'mask',]
         config = {
-            'name': 'MaskInference',
+            'name': cls.__name__,
             'modules': modules,
             'connections': connections,
             'output': output
         }
-        # Step 3. Instantiate the model as a SeparationModel.
         return nussl.ml.SeparationModel(config)
+
 
 # ----------------------------------------------------
 # --------------- AUDIO ESTIMATION MODELS ------------
