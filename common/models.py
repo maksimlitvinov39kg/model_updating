@@ -84,8 +84,8 @@ class MaskInference(nn.Module):
 
         self.amplitude_to_db = AmplitudeToDB()
         self.input_normalization = BatchNorm(num_features)
-        self.fc1 = Linear(num_features * num_audio_channels, hidden_size, bias=False)
-        self.bn1 = BatchNorm(hidden_size)
+        # self.fc1 = Linear(num_features * num_audio_channels, hidden_size, bias=False)
+        # self.bn1 = BatchNorm(hidden_size)
         self.recurrent_stack = RecurrentStack(
             num_features * num_audio_channels, hidden_size, 
             num_layers, bidirectional, dropout
@@ -119,9 +119,9 @@ class MaskInference(nn.Module):
         # data = (data + self.input_mean) * self.input_scale
         
         # Первый линейный слой и BatchNorm
-        data = self.fc1(data)
-        data = self.bn1(data)
-        data = torch.tanh(data)  # активация Tanh
+        # data = self.fc1(data)
+        # data = self.bn1(data)
+        # data = torch.tanh(data)  # активация Tanh
         
         # Рекуррентные слои
         data = self.recurrent_stack(data)
